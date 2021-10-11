@@ -15,6 +15,7 @@ local http_ng = require('resty.http_ng')
 local user_agent = require('apicast.user_agent')
 local resty_url = require('resty.url')
 local resty_env = require('resty.env')
+local cjson = require('cjson')
 
 local new = _M.new
 
@@ -27,7 +28,6 @@ function _M.new(config)
   self.access_token = resty_env.value("3SCALE_ADMIN_API_ACCESS_TOKEN") or ''
 
   -- build local http client
-
   local client = http_ng.new{
     backend = http_ng,
     options = {
@@ -40,61 +40,91 @@ function _M.new(config)
   }
   self.http_client = client
 
-  -- Use redis for caching the mostly
-  local red = ts.connect_redis()
-
   return self
 end
 
 function _M:rewrite()
+  local app_id = obtain_app_id()
+  if not app_id then
+    return
+  end
+
+  -- TODO: Use redis for reading from cache first.
+  local red = ts.connect_redis()
+
+  local result = red.get(app_id)
+  if result then
+    return result
+  end
+
+  -- Otherwise, fall back to APIs.
+  local account_id = application_find(app_id).application.user_account_id
+  local account_data = accound_read(accound_id)
+
+  local profile = {
+    id = account_data.account.id,
+    info = account_data.account.extra_fields
+  }
+
+  -- TODO: cache profile info into redis by app-id as the cache key, value is the profile table.
+
   -- change the request before it reaches upstream or backend.
   -- This is here to avoid calling ngx.req.get_headers() in every command
   -- applied to the request headers.
   local req_headers = ngx.req.get_headers() or {}
-  run_commands(context, self.config.request, 'request', req_headers)
+  set_request_header('X-Account-Id', profile.id)
+  set_request_header('X-Account-Info', cjson.encode(profile.info))
 end
 
 
 --- Get the associated `account_id` using the `app_id` or `jwt.client_id` params from 3scale API.
 local function application_find(app_id)
   local http_client = self.http_client
-
   if not http_client then
-    return nil, 'not initialized'
+    return nil, 'http_client not initialized'
   end
 
   path = '/admin/api/applications/find.json'
-
   local url = build_url(self, path, { app_id = app_id, access_token = self.access_token })
   local res = http_client.get(url, options)
 
   ngx.log(ngx.INFO, 'http client uri: ', url, ' ok: ', res.ok, ' status: ',
           res.status, ' body: ', res.body, ' error: ', res.error)
 
-  return res
+  if res.status == 200 and res.body then
+    return cjson.decode(res.body)
+  else
+    return nil
+  end
 end
 
 --- Get the extra_fields data for that account using the `accound_id` param from 3scale API.
 local function accound_read(id)
-  local http_client = self.http_client
+  if not id then
+    return nil, 'app_id is empty'
+  end
 
+  local http_client = self.http_client
   if not http_client then
     return nil, 'not initialized'
   end
 
   path = '/admin/api/accounts/' .. id .. '.json'
-
   local url = build_url(self, path, { app_id = app_id, access_token = self.access_token })
   local res = http_client.get(url, options)
 
   ngx.log(ngx.INFO, 'http client uri: ', url, ' ok: ', res.ok, ' status: ',
           res.status, ' body: ', res.body, ' error: ', res.error)
 
-  return res
+  if res.status == 200 and res.body then
+    return cjson.decode(res.body)
+  else
+    return nil
+  end
 end
 
 --- utilities
-
+---
 local function build_url(self, path, ...)
   local endpoint = self.base_url
 
@@ -117,5 +147,14 @@ local function build_args(args)
 
   return concat(query, '&')
 end
+
+local function obtain_app_id()
+  return context.credentials.app_id
+end
+
+local function set_request_header(header_name, value)
+  ngx.req.set_header(header_name, value)
+end
+
 
 return _M
