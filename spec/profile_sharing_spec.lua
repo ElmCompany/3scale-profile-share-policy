@@ -20,8 +20,8 @@ describe('profile_sharing policy', function()
 
       m = _M.new()
 
-      assert.stub(resty_env.value).was.called_with("3SCALE_ADMIN_API_URL")
-      assert.stub(resty_env.value).was.called_with("3SCALE_ADMIN_API_ACCESS_TOKEN")
+      assert.stub(resty_env.value).was.called_with("THREESCALE_ADMIN_API_URL")
+      assert.stub(resty_env.value).was.called_with("THREESCALE_ADMIN_API_ACCESS_TOKEN")
     end)
 
     it('falls resillently if cannot read base url and access token from environment variables', function()
@@ -36,8 +36,15 @@ describe('profile_sharing policy', function()
     end)
   end)
 
-  describe('.find_account', function ()
-    it ('loads account data given its id', function ()
+  describe('.rewrite', function ()
+    local module
+    before_each(function() module = _M.new() end)
+
+    it ('exits safely if no app_id is found in context', function ()
+      assert.equals(module.rewrite(), nil)
+    end)
+
+    it ('loads account data given its id successfully', function ()
     end)
   end)
 end)

@@ -19,16 +19,23 @@ local cjson = require('cjson')
 
 local new = _M.new
 
+local function obtain_app_id()
+  if context and context.credentials and context.credentials.app_id then
+    return context.credentials.app_id
+  end
+  return nil
+end
+
 --- Initialize a profile_sharing
 -- @tparam[opt] table config Policy configuration.
 function _M.new(config)
   local self = new(config)
 
-  self.base_url     = resty_env.value("3SCALE_ADMIN_API_URL") or ''
-  self.access_token = resty_env.value("3SCALE_ADMIN_API_ACCESS_TOKEN") or ''
+  self.base_url     = resty_env.value("THREESCALE_ADMIN_API_URL") or ''
+  self.access_token = resty_env.value("THREESCALE_ADMIN_API_ACCESS_TOKEN") or ''
 
   -- build local http client
-  local client = http_ng.new{
+  local client = http_ng.new {
     backend = http_ng,
     options = {
       headers = {
@@ -49,33 +56,50 @@ function _M:rewrite()
     return
   end
 
-  -- TODO: Use redis for reading from cache first.
   local red = ts.connect_redis()
 
-  local result = red.get(app_id)
-  if result then
-    return result
+  -- Use redis for reading from cache first.
+  local cached_profile = red.get(app_id)
+  if cached_profile then
+    set_profile_headers(cached_profile)
+    return
   end
 
   -- Otherwise, fall back to APIs.
-  local account_id = application_find(app_id).application.user_account_id
-  local account_data = accound_read(accound_id)
+  local account = fetch_profile_from_backend(app_id)
+  if not account then
+    return
+  end
 
   local profile = {
-    id = account_data.account.id,
-    info = account_data.account.extra_fields
+    id = account.id,
+    info = account.extra_fields
   }
+  -- Cache profile info into redis by app-id as the cache key, value is the profile table.
+  red.set(app_id, profile)
 
-  -- TODO: cache profile info into redis by app-id as the cache key, value is the profile table.
-
-  -- change the request before it reaches upstream or backend.
-  -- This is here to avoid calling ngx.req.get_headers() in every command
-  -- applied to the request headers.
-  local req_headers = ngx.req.get_headers() or {}
-  set_request_header('X-Account-Id', profile.id)
-  set_request_header('X-Account-Info', cjson.encode(profile.info))
+  -- Change the request before it reaches upstream or backend.
+  set_profile_headers(profile)
 end
 
+local function fetch_profile_from_backend(app_id)
+  local app_response = application_find(app_id)
+
+  if not app_response or
+     not app_response.application or
+     not app_response.application.user_account_id then
+    return nil
+  end
+
+  local acc_response = accound_read(accound_id)
+  if not acc_response or
+     not acc_response.account or
+     not acc_response.account.id then
+    return nil
+  end
+
+  return acc_response.account
+end
 
 --- Get the associated `account_id` using the `app_id` or `jwt.client_id` params from 3scale API.
 local function application_find(app_id)
@@ -100,7 +124,7 @@ end
 
 --- Get the extra_fields data for that account using the `accound_id` param from 3scale API.
 local function accound_read(id)
-  if not id then
+  if not id or id == '' then
     return nil, 'app_id is empty'
   end
 
@@ -116,11 +140,6 @@ local function accound_read(id)
   ngx.log(ngx.INFO, 'http client uri: ', url, ' ok: ', res.ok, ' status: ',
           res.status, ' body: ', res.body, ' error: ', res.error)
 
-  if res.status == 200 and res.body then
-    return cjson.decode(res.body)
-  else
-    return nil
-  end
 end
 
 --- utilities
@@ -148,8 +167,9 @@ local function build_args(args)
   return concat(query, '&')
 end
 
-local function obtain_app_id()
-  return context.credentials.app_id
+local function set_profile_headers(profile)
+  set_request_header('X-Api-Gateway-Account-Id', profile.id)
+  set_request_header('X-Api-Gateway-Account-Info', cjson.encode(profile.info))
 end
 
 local function set_request_header(header_name, value)
