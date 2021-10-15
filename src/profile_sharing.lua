@@ -19,6 +19,8 @@ local cjson = require('cjson')
 
 local new = _M.new
 
+--- utilities (local functions)
+---
 local function obtain_app_id()
   if context and context.credentials and context.credentials.app_id then
     return context.credentials.app_id
@@ -26,8 +28,85 @@ local function obtain_app_id()
   return nil
 end
 
---- Initialize a profile_sharing
+local function application_find(app_id)
+  --- Get the associated `account_id` using the `app_id` or `jwt.client_id` params from 3scale API.
+  --
+  local http_client = self.http_client
+  if not http_client then
+    return nil, 'http_client not initialized'
+  end
+
+  path = '/admin/api/applications/find.json'
+  local url = build_url(self, path, { app_id = app_id, access_token = self.access_token })
+  local res = http_client.get(url, options)
+
+  ngx.log(ngx.INFO, 'http client uri: ', url, ' ok: ', res.ok, ' status: ',
+          res.status, ' body: ', res.body, ' error: ', res.error)
+
+  if res.status == 200 and res.body then
+    return cjson.decode(res.body)
+  else
+    return nil
+  end
+end
+
+local function accound_read(id)
+  --- Get the extra_fields data for that account using the `accound_id` param from 3scale API.
+  --
+  if not id or id == '' then
+    return nil, 'app_id is empty'
+  end
+
+  local http_client = self.http_client
+  if not http_client then
+    return nil, 'not initialized'
+  end
+
+  path = '/admin/api/accounts/' .. id .. '.json'
+  local url = build_url(self, path, { app_id = app_id, access_token = self.access_token })
+  local res = http_client.get(url, options)
+
+  ngx.log(ngx.INFO, 'http client uri: ', url, ' ok: ', res.ok, ' status: ',
+          res.status, ' body: ', res.body, ' error: ', res.error)
+
+end
+
+local function build_url(self, path, ...)
+  local endpoint = self.base_url
+
+  if not endpoint then
+    return nil, 'missing endpoint'
+  end
+
+  return resty_url.join(endpoint, '', path .. '?' .. build_args(...))
+end
+
+local function build_args(args)
+  local query = {}
+
+  for i=1, #args do
+    local arg = ngx.encode_args(args[i])
+    if len(arg) > 0 then
+      insert(query, arg)
+    end
+  end
+
+  return concat(query, '&')
+end
+
+local function set_profile_headers(profile)
+  set_request_header('X-Api-Gateway-Account-Id', profile.id)
+  set_request_header('X-Api-Gateway-Account-Info', cjson.encode(profile.info))
+end
+
+local function set_request_header(header_name, value)
+  ngx.req.set_header(header_name, value)
+end
+
+
+--- Initialize a profile_sharing module
 -- @tparam[opt] table config Policy configuration.
+--
 function _M.new(config)
   local self = new(config)
 
@@ -50,6 +129,8 @@ function _M.new(config)
   return self
 end
 
+--- Rewrite phase: add profile-share info before content phase done by upstream/backend.
+---
 function _M:rewrite()
   local app_id = obtain_app_id()
   if not app_id then
@@ -100,81 +181,5 @@ local function fetch_profile_from_backend(app_id)
 
   return acc_response.account
 end
-
---- Get the associated `account_id` using the `app_id` or `jwt.client_id` params from 3scale API.
-local function application_find(app_id)
-  local http_client = self.http_client
-  if not http_client then
-    return nil, 'http_client not initialized'
-  end
-
-  path = '/admin/api/applications/find.json'
-  local url = build_url(self, path, { app_id = app_id, access_token = self.access_token })
-  local res = http_client.get(url, options)
-
-  ngx.log(ngx.INFO, 'http client uri: ', url, ' ok: ', res.ok, ' status: ',
-          res.status, ' body: ', res.body, ' error: ', res.error)
-
-  if res.status == 200 and res.body then
-    return cjson.decode(res.body)
-  else
-    return nil
-  end
-end
-
---- Get the extra_fields data for that account using the `accound_id` param from 3scale API.
-local function accound_read(id)
-  if not id or id == '' then
-    return nil, 'app_id is empty'
-  end
-
-  local http_client = self.http_client
-  if not http_client then
-    return nil, 'not initialized'
-  end
-
-  path = '/admin/api/accounts/' .. id .. '.json'
-  local url = build_url(self, path, { app_id = app_id, access_token = self.access_token })
-  local res = http_client.get(url, options)
-
-  ngx.log(ngx.INFO, 'http client uri: ', url, ' ok: ', res.ok, ' status: ',
-          res.status, ' body: ', res.body, ' error: ', res.error)
-
-end
-
---- utilities
----
-local function build_url(self, path, ...)
-  local endpoint = self.base_url
-
-  if not endpoint then
-    return nil, 'missing endpoint'
-  end
-
-  return resty_url.join(endpoint, '', path .. '?' .. build_args(...))
-end
-
-local function build_args(args)
-  local query = {}
-
-  for i=1, #args do
-    local arg = ngx.encode_args(args[i])
-    if len(arg) > 0 then
-      insert(query, arg)
-    end
-  end
-
-  return concat(query, '&')
-end
-
-local function set_profile_headers(profile)
-  set_request_header('X-Api-Gateway-Account-Id', profile.id)
-  set_request_header('X-Api-Gateway-Account-Info', cjson.encode(profile.info))
-end
-
-local function set_request_header(header_name, value)
-  ngx.req.set_header(header_name, value)
-end
-
 
 return _M
