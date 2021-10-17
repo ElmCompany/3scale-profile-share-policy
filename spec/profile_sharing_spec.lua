@@ -133,7 +133,47 @@ describe('profile_sharing policy', function()
       ))
     end)
 
-    it ('fails resillently if API data is not found or reachabled', function ()
+    it ('fails resillently when find-application API data is not found or reachabled', function ()
+      local random_status = ({ 200, 404, 400, 503 })[math.random(1, 4)]
+      local random_body = ({ nil, cjson.encode({}), cjson.encode({ application = cjson.null }) })[math.random(1, 3)]
+
+      test_backend.expect{ url = base_url .. '/admin/api/applications/find.json?app_id=2&access_token=' .. token }.
+      respond_with { status = random_status, body = random_body }
+
+      module:rewrite({ credentials = { app_id = 2 } })
+
+      assert.spy(ngx.req.set_header).was_not_called()
+      assert.spy(ngx.req.set_header).was_not_called()
+      assert.spy(ngx.req.set_header).was_not_called()
+    end)
+
+    it ('fails resillently when read-account API data is not found or reachabled', function ()
+      test_backend.expect{ url = base_url .. '/admin/api/applications/find.json?app_id=2&access_token=' .. token }.
+      respond_with { status = 200, body = cjson.encode(
+        {
+          application = {
+            id = '2',
+            created_at = '2021-09-15T08:54:58Z',
+            updated_at = '2021-09-15T08:54:58Z',
+            state = 'live',
+            user_account_id = 2445,
+            first_traffic_at = cjson.null
+          }
+        }
+      )}
+
+      test_backend.expect{ url = base_url .. '/admin/api/accounts/2445.json?access_token=' .. token }.
+      respond_with { status = 200, body = cjson.encode(
+        {
+          account = { }
+        })
+      }
+
+      module:rewrite({ credentials = { app_id = 2 } })
+
+      assert.spy(ngx.req.set_header).was_not_called()
+      assert.spy(ngx.req.set_header).was_not_called()
+      assert.spy(ngx.req.set_header).was_not_called()
     end)
   end)
 
