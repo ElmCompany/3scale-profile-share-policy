@@ -1,9 +1,11 @@
-local _M = require('apicast.policy.profile_sharing')
+local _M = require 'apicast.policy.profile_sharing'
 local test_backend_client = require 'resty.http_ng.backend.test'
-local resty_env = require('resty.env')
+local resty_env = require 'resty.env'
 local cjson = require 'cjson'
 local user_agent = require 'apicast.user_agent'
 local env = require 'resty.env'
+local ts = require 'apicast.threescale_utils'
+
 local format = string.format
 local encode_args = ngx.encode_args
 
@@ -177,13 +179,50 @@ describe('profile_sharing policy', function()
     end)
   end)
 
-  describe(':rewrite phase - Caching', function ()
-    local module
+  local function stub_redis()
+    stub(ts, 'connect_redis', function(opts)
+      return {
+        get = function (key)
+          local result = cjson.encode({
+            id = 5,
+            name = 'TSD Team',
+            info = { moi_number = 000 }
+          })
+          return result
+        end,
+        set = function (key, value)  end
+      }
+    end)
+  end
 
+  describe(':rewrite phase - Caching', function ()
     local module
     before_each(function() module = _M.new() end)
 
+    before_each(function()
+      stub_ngx_request()
+      stub_redis()
+    end)
+
     it ('reads the profile from cache successfully', function ()
+      local redis = ts.connect_redis()
+
+      local cache_key = '5'
+      local cache_value = cjson.encode({
+        id = 5,
+        name = 'TSD Team',
+        info = { moi_number = 000 }
+      })
+
+      redis:set(cache_key, cache_value)
+
+      module:rewrite({ credentials = { app_id = 5 } })
+
+      assert.spy(ngx.req.set_header).was_called_with(module.header_keys.id, 5)
+      assert.spy(ngx.req.set_header).was_called_with(module.header_keys.name, 'TSD Team')
+      assert.spy(ngx.req.set_header).was_called_with(module.header_keys.info, cjson.encode(
+        { moi_number = 000 }
+      ))
     end)
 
     it ('sets the profile to the cache successfully', function ()

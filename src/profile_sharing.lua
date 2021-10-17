@@ -59,10 +59,9 @@ local function application_find(self, app_id)
     ngx.log(ngx.DEBUG, 'application_find() get error: ', err, ' url: ', url)
     return nil
   end
-
   ngx.log(ngx.INFO, 'http client uri: ', url, ' ok: ', res.ok, ' status: ', res.status, ' body: ', res.body)
 
-  if res.status == 200 and res.body then
+  if res.status == 200 and res.body and res.body ~= cjson.null then
     return cjson.decode(res.body)
   else
     return nil
@@ -90,7 +89,7 @@ local function accound_read(self, id)
   end
   ngx.log(ngx.INFO, 'http client uri: ', url, ' ok: ', res.ok, ' status: ', res.status, ' body: ', res.body)
 
-  if res.status == 200 and res.body then
+  if res.status == 200 and res.body and res.body ~= cjson.null then
     return cjson.decode(res.body)
   else
     return nil
@@ -99,16 +98,24 @@ end
 
 local function fetch_profile_from_backend(self, app_id)
   local app_response = application_find(self, app_id)
+
   if not app_response or
+     app_response == cjson.null or
      not app_response.application or
-     not app_response.application.user_account_id then
+     app_response.application == cjson.null or
+     not app_response.application.user_account_id or
+     app_response.application.user_account_id == cjson.null then
     return nil
   end
 
   local acc_response = accound_read(self, app_response.application.user_account_id)
+
   if not acc_response or
+     acc_response == cjson.null or
      not acc_response.account or
-     not acc_response.account.id then
+     acc_response.account == cjson.null or
+     not acc_response.account.id or
+     acc_response.account.id == cjson.null then
     return nil
   end
 
@@ -169,11 +176,12 @@ function _M:rewrite(context)
   end
 
   -- Use redis for reading from cache first.
-  local redis = ts.connect_redis()
-  if redis then
-    local cached_profile_data = redis.get(app_id)
-
-    local cached_profile = cjson.decode(cached_profile)
+  local redis, err = ts.connect_redis()
+  if not redis then
+    ngx.log(ngx.WARN, 'cannot connect to redis instance, error:', inspect(err))
+  else
+    local cached_profile_data = redis:get(tostring(app_id))
+    local cached_profile = cjson.decode(cached_profile_data)
 
     if cached_profile then
       set_profile_headers(self, cached_profile)
@@ -196,7 +204,7 @@ function _M:rewrite(context)
 
   -- Cache profile info into redis by app-id as the cache key, value is the profile table.
   if redis then
-    red.set(app_id, cjson.encode(profile))
+    red:set(tostring(app_id), cjson.encode(profile))
   end
 
   -- Change the request before it reaches upstream or backend.
