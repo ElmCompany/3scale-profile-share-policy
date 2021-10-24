@@ -1,11 +1,11 @@
 {
   "$schema": "http://apicast.io/policy-v1/schema#manifest#",
   "name": "profile_sharing",
-  "summary": "Profile Sharing policy",
+  "summary": "Profile Sharing",
   "description": [
       "A custom policy to attach the profile information of calling account as headers to target backends"
   ],
-  "version": "builtin",
+  "version": "1.0",
   "configuration": {
     "type": "object",
     "properties": { }
