@@ -46,7 +46,19 @@ describe('profile_sharing policy', function()
     before_each(function() module = _M.new() end)
 
     it ('exits safely if no app_id is found in context', function ()
-      assert.equals(module.rewrite(), nil)
+      assert.equals(module:rewrite(), nil)
+    end)
+
+    it ('obtains app_id from service if not in context already', function ()
+      local mocked_service = { service = {
+        extract_credentials = function ()
+          return { app_id = '324', app_key = 'lnk434rg24gw' }
+        end
+      } }
+      stub(mocked_service.service, 'extract_credentials')
+
+      module:rewrite(mocked_service)
+      assert.spy(mocked_service.service.extract_credentials).was_called()
     end)
   end)
 
@@ -179,33 +191,37 @@ describe('profile_sharing policy', function()
     end)
   end)
 
-  local function stub_redis()
-    stub(ts, 'connect_redis', function(opts)
-      return {
-        get = function (key)
-          local result = cjson.encode({
-            id = 5,
-            name = 'TSD Team',
-            info = { moi_number = 000 }
-          })
-          return result
-        end,
-        set = function (key, value)  end
-      }
-    end)
-  end
-
   describe(':rewrite phase - Caching', function ()
     local module
-    before_each(function() module = _M.new() end)
 
+    local function stub_redis()
+      stub(module, 'safe_connect_redis', function(opts)
+        return {
+          get = function (key)
+            local result = cjson.encode({
+              id = 5,
+              name = 'TSD Team',
+              info = { moi_number = 000 }
+            })
+            return result
+          end,
+          set = function (key, value)
+            local fake_cache = {}
+            fake_cache[key] = value
+            return
+          end
+        }
+      end)
+    end
+
+    before_each(function() module = _M.new() end)
     before_each(function()
       stub_ngx_request()
       stub_redis()
     end)
 
     it ('reads the profile from cache successfully', function ()
-      local redis = ts.connect_redis()
+      local redis = module:safe_connect_redis()
 
       local cache_key = '5'
       local cache_value = cjson.encode({

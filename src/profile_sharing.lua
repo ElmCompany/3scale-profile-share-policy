@@ -11,6 +11,7 @@ local format = string.format
 local pairs = pairs
 
 local ts = require ('apicast.threescale_utils')
+local redis = require('resty.redis')
 local http_ng = require('resty.http_ng')
 local http_ng_resty = require('resty.http_ng.backend.resty')
 local user_agent = require('apicast.user_agent')
@@ -24,13 +25,27 @@ local new = _M.new
 --- Utilities (local functions)
 ---
 local function obtain_app_id(context)
-  if not context or
-     not context.credentials or
-     not context.credentials.app_id then
+  if not context then
     return nil
   end
 
-  return context.credentials.app_id
+  if context.credentials and context.credentials.app_id then
+    return context.credentials.app_id
+  end
+
+  local service = context.service
+  if not service then
+    ngx.log(ngx.WARN, 'unable to find credentials nor service in context')
+    return nil
+  end
+
+  local service_creds = service:extract_credentials()
+  if not service_creds or
+     not service_creds.app_id then
+    return nil
+  end
+
+  return service_creds.app_id
 end
 
 local function build_url(self, path_and_params)
@@ -102,13 +117,16 @@ local function fetch_profile_from_backend(self, app_id)
   if not app_response or
      app_response == cjson.null or
      not app_response.application or
-     app_response.application == cjson.null or
-     not app_response.application.user_account_id or
-     app_response.application.user_account_id == cjson.null then
+     app_response.application == cjson.null then
     return nil
   end
 
-  local acc_response = accound_read(self, app_response.application.user_account_id)
+  local accound_id = app_response.application.account_id or app_response.application.user_account_id
+  if not accound_id then
+    return nil
+  end
+
+  local acc_response = accound_read(self, accound_id)
 
   if not acc_response or
      acc_response == cjson.null or
@@ -131,6 +149,7 @@ local function set_profile_headers(self, profile)
   set_request_header(self.header_keys.name, profile.name)
   set_request_header(self.header_keys.info, cjson.encode(profile.info))
 end
+
 
 --- Initialize a profile_sharing module
 -- @tparam[opt] table config Policy configuration.
@@ -161,7 +180,6 @@ function _M.new(config)
       ssl = { verify = resty_env.enabled('OPENSSL_VERIFY') }
     }
   }
-
   self.http_client = client
 
   return self
@@ -171,45 +189,111 @@ end
 ---
 function _M:rewrite(context)
   local app_id = obtain_app_id(context)
+
   if not app_id then
+    ngx.log(ngx.DEBUG, 'app_id not found in context.')
     return
   end
+  ngx.log(ngx.DEBUG, 'app_id is assigned from context: ', app_id)
+
 
   -- Use redis for reading from cache first.
-  local redis, err = ts.connect_redis()
+  local redis, err = self.safe_connect_redis()
   if not redis then
     ngx.log(ngx.WARN, 'cannot connect to redis instance, error:', inspect(err))
   else
-    local cached_profile_data = redis:get(tostring(app_id))
-    local cached_profile = cjson.decode(cached_profile_data)
+    local cached_data = redis:get(tostring(app_id))
+    ngx.log(ngx.INFO, 'account data found in cache: ', cjson.encode(cached_data))
+    if cached_data and cached_data ~= nil and type(cached_data) == 'string' then
+      local cached_profile = cjson.decode(cached_data)
 
-    if cached_profile then
-      set_profile_headers(self, cached_profile)
-      return
+      if cached_profile and cached_profile ~= nil then
+        set_profile_headers(self, cached_profile)
+        return
+      end
     end
   end
 
   -- Otherwise, fall back to APIs.
   local account = fetch_profile_from_backend(self, app_id)
   if not account then
-    ngx.log(ngx.WARN, 'account information is not found in system. app_id = ' .. app_id)
+    ngx.log(ngx.WARN, 'account information is not found in the system. app_id = ' .. app_id)
     return
   end
 
   local profile = {
     id = account.id,
     name = account.org_name,
-    info = account.extra_fields
+    info = account.organization_number or account.extra_fields
   }
 
   -- Cache profile info into redis by app-id as the cache key, value is the profile table.
   if redis then
-    red:set(tostring(app_id), cjson.encode(profile))
+    redis:set(tostring(app_id), cjson.encode(profile))
   end
 
   -- Change the request before it reaches upstream or backend.
   set_profile_headers(self, profile)
 end
 
+function _M.safe_connect_redis(options)
+  local opts = {}
+  local url = options and options.url or resty_env.get('REDIS_URL')
+  local redis_conf = {
+    timeout   = 3000,  -- 3 seconds
+    keepalive = 10000, -- milliseconds
+    poolsize  = 1000   -- # connections
+  }
+
+  if url then
+    url = resty_url.split(url, 'redis')
+    if url then
+      opts.host = url[4]
+      opts.port = url[5]
+      opts.db = url[6] and tonumber(sub(url[6], 2))
+      opts.password = url[3] or url[2]
+    end
+  elseif options then
+    opts.host = options.host
+    opts.port = options.port
+    opts.db = options.db
+    opts.password = options.password
+  end
+
+  opts.timeout = options and options.timeout or redis_conf.timeout
+
+  local host = opts.host or resty_env.get('REDIS_HOST') or "127.0.0.1"
+  local port = opts.port or resty_env.get('REDIS_PORT') or 6379
+
+  local red = redis:new()
+
+  red:set_timeout(opts.timeout)
+
+  local ok, err = red:connect(ts.resolve(host, port))
+  if not ok then
+    ngx.log(ngx.WARN, "failed to connect to redis on ", host, ":", port, ": ", err)
+    return nil
+  end
+
+  if opts.password then
+    ok = red:auth(opts.password)
+
+    if not ok then
+      ngx.log(ngx.WARN, "failed to auth on redis ", host, ":", port)
+      return nil
+    end
+  end
+
+  if opts.db then
+    ok = red:select(opts.db)
+
+    if not ok then
+      ngx.log(ngx.WARN, "failed to select db ", opts.db, " on redis ", host, ":", port)
+      return nil
+    end
+  end
+
+  return red
+end
 
 return _M
