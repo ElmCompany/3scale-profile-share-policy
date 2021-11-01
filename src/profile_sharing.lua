@@ -169,8 +169,9 @@ function _M.new(config)
   self.base_url     = resty_env.value("THREESCALE_ADMIN_API_URL") or ''
   self.access_token = resty_env.value("THREESCALE_ADMIN_API_ACCESS_TOKEN") or ''
 
-  -- build local http client, or used pre-defined one (if injected).
+  self.cache_key_prefix = 'elm-customer-'
 
+  -- build local http client, or used pre-defined one (if injected).
   local client = http_ng.new {
     backend = config and config.backend or http_ng_resty,
     options = {
@@ -197,13 +198,15 @@ function _M:rewrite(context)
   end
   ngx.log(ngx.DEBUG, 'app_id is assigned from context: ', app_id)
 
+  -- Assign the cahce key with app_id and prefix.
+  local cache_key = self.cache_key_prefix .. tostring(app_id)
 
   -- Use redis for reading from cache first.
   local redis, err = self.safe_connect_redis()
   if not redis then
     ngx.log(ngx.WARN, 'cannot connect to redis instance, error:', inspect(err))
   else
-    local cached_data = redis:get(tostring(app_id))
+    local cached_data = redis:get(cache_key)
     ngx.log(ngx.INFO, 'account data found in cache: ', cjson.encode(cached_data))
     if cached_data and cached_data ~= nil and type(cached_data) == 'string' then
       local cached_profile = cjson.decode(cached_data)
@@ -230,7 +233,7 @@ function _M:rewrite(context)
 
   -- Cache profile info into redis by app-id as the cache key, value is the profile table.
   if redis then
-    redis:set(tostring(app_id), cjson.encode(profile))
+    redis:set(cache_key, cjson.encode(profile))
   end
 
   -- Change the request before it reaches upstream or backend.
