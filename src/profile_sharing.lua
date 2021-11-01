@@ -9,6 +9,7 @@ local insert = table.insert
 local len = string.len
 local format = string.format
 local pairs = pairs
+local sub = string.sub
 
 local ts = require ('apicast.threescale_utils')
 local redis = require('resty.redis')
