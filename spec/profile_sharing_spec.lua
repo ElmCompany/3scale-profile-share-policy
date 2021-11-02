@@ -110,7 +110,13 @@ describe('profile_sharing policy', function()
             updated_at = '2021-09-15T08:54:58Z',
             state = 'live',
             user_account_id = 2445,
-            first_traffic_at = cjson.null
+            first_traffic_at = cjson.null,
+            plan = {
+              id = 829,
+              name = 'Basic',
+              type = 'application_plan',
+              approval_required = true
+            }
           }
         }
       )}
@@ -145,6 +151,8 @@ describe('profile_sharing policy', function()
       assert.spy(ngx.req.set_header).was_called_with(module.header_keys.info, cjson.encode(
         { moi_number = 1234 }
       ))
+      assert.spy(ngx.req.set_header).was_called_with(module.header_keys.plan_id, 829)
+      assert.spy(ngx.req.set_header).was_called_with(module.header_keys.plan_name, 'Basic')
     end)
 
     it ('fails resillently when find-application API data is not found or reachabled', function ()

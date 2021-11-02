@@ -138,7 +138,7 @@ local function fetch_profile_from_backend(self, app_id)
     return nil
   end
 
-  return acc_response.account
+  return acc_response.account, app_response.application.plan
 end
 
 local function set_request_header(header_name, value)
@@ -149,6 +149,8 @@ local function set_profile_headers(self, profile)
   set_request_header(self.header_keys.id, profile.id)
   set_request_header(self.header_keys.name, profile.name)
   set_request_header(self.header_keys.info, cjson.encode(profile.info))
+  set_request_header(self.header_keys.plan_id, profile.plan_id)
+  set_request_header(self.header_keys.plan_name, profile.plan_name)
 end
 
 
@@ -160,9 +162,11 @@ function _M.new(config)
 
   -- define header keys to be used.
   self.header_keys = {
-    id   = 'X-Api-Gateway-Account-Id',
-    name = 'X-Api-Gateway-Account-Name',
-    info = 'X-Api-Gateway-Account-Info'
+    id        = 'X-Api-Gateway-Account-Id',
+    name      = 'X-Api-Gateway-Account-Name',
+    info      = 'X-Api-Gateway-Account-Info',
+    plan_id   = 'X-Api-Gateway-Account-Plan-Id',
+    plan_name = 'X-Api-Gateway-Account-Plan-Name',
   }
 
   -- load environment variables for admin APIs access.
@@ -219,7 +223,7 @@ function _M:rewrite(context)
   end
 
   -- Otherwise, fall back to APIs.
-  local account = fetch_profile_from_backend(self, app_id)
+  local account, plan = fetch_profile_from_backend(self, app_id)
   if not account then
     ngx.log(ngx.WARN, 'account information is not found in the system. app_id = ' .. app_id)
     return
@@ -228,8 +232,15 @@ function _M:rewrite(context)
   local profile = {
     id = account.id,
     name = account.org_name,
-    info = account.organization_number or account.extra_fields
+    info = account.organization_number or account.extra_fields,
+    plan_id = nil,
+    plan_name = nil
   }
+
+  if plan then
+    profile.plan_id = plan.id
+    profile.plan_name = plan.name
+  end
 
   -- Cache profile info into redis by app-id as the cache key, value is the profile table.
   if redis then
