@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: "apicast-profile-sharing"
+message: "APIcast Profile Sharing Policy"
+objects:
+
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    annotations:
+    labels:
+      app: apicast
+    name: apicast-policy
+
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    annotations:
+    labels:
+      app: apicast
+    name: apicast-profile-sharing
+  spec:
+    output:
+      to:
+        kind: ImageStreamTag
+        name: apicast-policy:profile-sharing
+    source:
+      git:
+        uri: https://github.com/abarrak/3scale-profile-share-policy.git
+        ref: 'master'
+      type: Git
+    strategy:
+      type: Source
+      sourceStrategy:
+        from:
+          kind: ImageStreamTag
+          name: 'amp-apicast:${AMP_RELEASE}'
+
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    annotations:
+    labels:
+      app: apicast
+    name: apicast-custom-policies
+  spec:
+    nodeSelector: null
+    output:
+      to:
+        kind: ImageStreamTag
+        name: 'amp-apicast:latest'
+    postCommit:
+      args:
+        - '--test'
+        - '--lazy'
+      command:
+        - bin/apicast
+    resources: {}
+    runPolicy: Serial
+    source:
+      images:
+        - from:
+            kind: ImageStreamTag
+            name: 'apicast-policy:profile-sharing'
+          paths:
+            # copy policy source code into the new image
+            - destinationDir: policies
+              sourcePath: /opt/app-root/policies/profile_sharing
+      type: Dockerfile
+      dockerfile: |
+        FROM scratch
+        COPY . src
+        USER root
+
+    strategy:
+      dockerStrategy:
+        from:
+          kind: ImageStreamTag
+          name: 'amp-apicast:${AMP_RELEASE}'
+      type: Docker
+    triggers:
+      - type: ConfigChange
+      - type: ImageChange
+
+parameters:
+- name: AMP_RELEASE
+  required: true
+  description: AMP Version (eg. 2.2.0-GA)

@@ -256,7 +256,7 @@ describe('profile_sharing policy', function()
   describe(':rewrite phase - Headers', function ()
     local module
     local test_backend
-    local base_url = 'https://3scale-dev.apps.elm.com'
+    local base_url = 'https://3scale-dev.apps.com'
     local token = '238ivd'
 
     before_each(function ()

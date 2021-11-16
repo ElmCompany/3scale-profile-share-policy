@@ -127,6 +127,14 @@ local function fetch_profile_from_backend(self, app_id)
     return nil
   end
 
+  local plan = nil
+  if app_response.application.plan then
+    plan = app_response.application.plan
+  elseif app_response.application.plan_id and app_response.application.plan_name then
+    plan = { id = app_response.application.plan_id,
+             name = app_response.application.plan_name }
+  end
+
   local acc_response = accound_read(self, accound_id)
 
   if not acc_response or
@@ -138,7 +146,7 @@ local function fetch_profile_from_backend(self, app_id)
     return nil
   end
 
-  return acc_response.account, app_response.application.plan
+  return acc_response.account, plan
 end
 
 local function set_request_header(header_name, value)
@@ -173,7 +181,7 @@ function _M.new(config)
   self.base_url     = resty_env.value("THREESCALE_ADMIN_API_URL") or ''
   self.access_token = resty_env.value("THREESCALE_ADMIN_API_ACCESS_TOKEN") or ''
 
-  self.cache_key_prefix = 'elm-customer-'
+  self.cache_key_prefix = 'customer-info-'
 
   -- build local http client, or used pre-defined one (if injected).
   local client = http_ng.new {
