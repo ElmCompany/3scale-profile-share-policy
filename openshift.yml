@@ -27,7 +27,7 @@ objects:
         name: apicast-policy:profile-sharing
     source:
       git:
-        uri: https://github.com/abarrak/3scale-profile-share-policy.git
+        uri: https://github.com/elmcompany/3scale-profile-share-policy.git
         ref: 'master'
       type: Git
     strategy:
