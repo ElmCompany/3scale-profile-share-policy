@@ -27,12 +27,14 @@ describe('profile_sharing policy', function()
 
       assert.stub(resty_env.value).was.called_with('THREESCALE_ADMIN_API_URL')
       assert.stub(resty_env.value).was.called_with('THREESCALE_ADMIN_API_ACCESS_TOKEN')
+      assert.stub(resty_env.value).was.called_with('OPENSHIFT_ENV')
     end)
 
     it('falls resillently if cannot read base url and access token from environment variables', function()
       m = _M.new()
       assert.equals(m.base_url, '')
       assert.equals(m.access_token, '')
+      assert.equals(m.openshift_env, '1')
     end)
 
     it('builds an http client for communicating with APIs', function()
@@ -85,6 +87,7 @@ describe('profile_sharing policy', function()
     before_each(function ()
       resty_env.set('THREESCALE_ADMIN_API_URL', base_url)
       resty_env.set('THREESCALE_ADMIN_API_ACCESS_TOKEN', token)
+      resty_env.set('OPENSHIFT_ENV', '0')
     end)
 
     before_each(function()
@@ -199,6 +202,83 @@ describe('profile_sharing policy', function()
     end)
   end)
 
+  describe('internal OCP networking', function ()
+    local test_backend
+    local module
+    local base_url = 'https://example.com'
+    local token = '2qew5yrthfr'
+
+    local base_svc_url = 'http://system-provider:3000'
+
+    before_each(function ()
+      resty_env.set('THREESCALE_ADMIN_API_URL', base_url)
+      resty_env.set('THREESCALE_ADMIN_API_ACCESS_TOKEN', token)
+      resty_env.set('OPENSHIFT_ENV', '1')
+    end)
+
+    before_each(function()
+      stub_ngx_request()
+
+      test_backend = test_backend_client.new()
+      module = _M.new({ backend = test_backend })
+    end)
+
+    it ('connects to the proxy internal service if running inside Openshift', function ()
+      test_backend.expect{ url = base_svc_url .. '/admin/api/applications/find.json?app_id=2&access_token=' .. token }.
+      respond_with { status = 200, body = cjson.encode(
+        {
+          application = {
+            id = '2',
+            created_at = '2021-09-15T08:54:58Z',
+            updated_at = '2021-09-15T08:54:58Z',
+            state = 'live',
+            user_account_id = 2445,
+            first_traffic_at = cjson.null,
+            plan = {
+              id = 829,
+              name = 'Basic',
+              type = 'application_plan',
+              approval_required = true
+            }
+          }
+        }
+      )}
+
+      test_backend.expect{ url = base_svc_url .. '/admin/api/accounts/2445.json?access_token=' .. token }.
+      respond_with { status = 200, body = cjson.encode(
+        {
+          account = {
+            id = 2445583835853,
+            created_at = '2021-09-16T10:37:50+10:00',
+            updated_at = '2021-09-16T10:37:50+10:00',
+            state = 'created',
+            org_name = 'test',
+            city = 'test001',
+            country = 'Australia',
+            extra_fields = {
+              moi_number = 1234
+            },
+            monthly_billing_enabled = true,
+            monthly_charging_enabled = true,
+            credit_card_stored = false,
+            plans = {},
+            users = {}
+          }
+        })
+      }
+
+      module:rewrite({ credentials = { app_id = 2 } })
+
+      assert.spy(ngx.req.set_header).was_called_with(module.header_keys.id, 2445583835853)
+      assert.spy(ngx.req.set_header).was_called_with(module.header_keys.name, 'test')
+      assert.spy(ngx.req.set_header).was_called_with(module.header_keys.info, cjson.encode(
+        { moi_number = 1234 }
+      ))
+      assert.spy(ngx.req.set_header).was_called_with(module.header_keys.plan_id, 829)
+      assert.spy(ngx.req.set_header).was_called_with(module.header_keys.plan_name, 'Basic')
+    end)
+  end)
+
   describe(':rewrite phase - Caching', function ()
     local module
 
@@ -256,12 +336,13 @@ describe('profile_sharing policy', function()
   describe(':rewrite phase - Headers', function ()
     local module
     local test_backend
-    local base_url = 'https://3scale-dev.apps.com'
+    local base_url = 'https://3scale-dev.apps.elm.com'
     local token = '238ivd'
 
     before_each(function ()
       resty_env.set('THREESCALE_ADMIN_API_URL', base_url)
       resty_env.set('THREESCALE_ADMIN_API_ACCESS_TOKEN', token)
+      resty_env.set('OPENSHIFT_ENV', '0')
     end)
 
     before_each(function()

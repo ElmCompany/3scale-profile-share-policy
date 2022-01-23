@@ -52,6 +52,10 @@ end
 local function build_url(self, path_and_params)
   local endpoint = self.base_url
 
+  if self.openshift_env and self.openshift_env == '1' then
+    endpoint = 'http://system-provider:3000'
+  end
+
   if not endpoint then
     return nil, 'missing endpoint'
   end
@@ -178,8 +182,9 @@ function _M.new(config)
   }
 
   -- load environment variables for admin APIs access.
-  self.base_url     = resty_env.value("THREESCALE_ADMIN_API_URL") or ''
-  self.access_token = resty_env.value("THREESCALE_ADMIN_API_ACCESS_TOKEN") or ''
+  self.base_url       = resty_env.value("THREESCALE_ADMIN_API_URL") or ''
+  self.access_token   = resty_env.value("THREESCALE_ADMIN_API_ACCESS_TOKEN") or ''
+  self.openshift_env  = resty_env.value("OPENSHIFT_ENV") or '1'
 
   self.cache_key_prefix = 'customer-info-'
 
@@ -188,8 +193,9 @@ function _M.new(config)
     backend = config and config.backend or http_ng_resty,
     options = {
       headers = {
-        host = base_url,
-        user_agent = user_agent()
+        host = self.base_url,
+        user_agent = user_agent(),
+        ['X-Forwarded-Proto'] = 'https',
       },
       ssl = { verify = resty_env.enabled('OPENSSL_VERIFY') }
     }
