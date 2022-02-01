@@ -34,7 +34,7 @@ describe('profile_sharing policy', function()
       m = _M.new()
       assert.equals(m.base_url, '')
       assert.equals(m.access_token, '')
-      assert.equals(m.openshift_env, '1')
+      assert.equals(m.openshift_env, '0')
     end)
 
     it('builds an http client for communicating with APIs', function()

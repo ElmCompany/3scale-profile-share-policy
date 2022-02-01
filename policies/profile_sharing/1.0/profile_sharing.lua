@@ -184,7 +184,7 @@ function _M.new(config)
   -- load environment variables for admin APIs access.
   self.base_url       = resty_env.value("THREESCALE_ADMIN_API_URL") or ''
   self.access_token   = resty_env.value("THREESCALE_ADMIN_API_ACCESS_TOKEN") or ''
-  self.openshift_env  = resty_env.value("OPENSHIFT_ENV") or '1'
+  self.openshift_env  = resty_env.value("OPENSHIFT_ENV") or '0'
 
   self.cache_key_prefix = 'customer-info-'
 
